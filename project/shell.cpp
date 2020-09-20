@@ -36,6 +36,9 @@ struct Expression {
 	bool background = false;
 };
 
+#define READ_END 0
+#define WRITE_END 1
+
 // Parses a string to form a vector of arguments. The seperator is a space char (' ').
 vector<string> splitString(const string& str, char delimiter = ' ') {
 	vector<string> retval;
@@ -162,15 +165,24 @@ int normal(bool showPrompt) {
 // framework for executing "date | tail -c 10" using raw commands
 // two processes are created, and connected to each other
 int step1(bool showPrompt) {
+	int pipefd[2];
 	// create communication channel shared between the two processes
 	// ...
+	if(pipe(pipefd) == -1) {
+		fprintf(stderr, "Pipe failed");
+		return 1;
+	}
 
 	pid_t child1 = fork();
 	if (child1 == 0) {
 		// redirect standard output (STDOUT_FILENO) to the input of the shared communication channel
+		dup2(pipefd[WRITE_END], STDOUT_FILENO);
 		// free non used resources (why?)
+		//write(pipefd[WRITE_END], "testmessage", strlen("testmessage"));
+		
 		Command cmd = {{string("date")}};
 		executeCommand(cmd);
+		
 		// display nice warning that the executable could not be found
 		abort(); // if the executable is not found, we should abort. (why?)
 	}
@@ -178,6 +190,9 @@ int step1(bool showPrompt) {
 	pid_t child2 = fork();
 	if (child2 == 0) {
 		// redirect the output of the shared communication channel to the standard input (STDIN_FILENO).
+		dup2(pipefd[READ_END], STDIN_FILENO);
+		close(pipefd[WRITE_END]);
+
 		// free non used resources (why?)
 		Command cmd = {{string("tail"), string("-c"), string("5")}};
 		executeCommand(cmd);
@@ -192,9 +207,9 @@ int step1(bool showPrompt) {
 }
 
 int shell(bool showPrompt) {
-	//*
+	/*
 	return normal(showPrompt);
-	/*/
+	*/
 	return step1(showPrompt);
-	//*/
+	
 }
