@@ -135,19 +135,83 @@ Expression parseCommandLine(string commandLine) {
 	return expression;
 }
 
+int execCmd(Expression& expression) {
+	int pid = fork();
+	if(pid == 0) {
+		if (expression.background) {
+			close(STDIN_FILENO);
+		}
+		executeCommand(expression.commands.at(0));
+	}
+	if (expression.background == false) {
+		waitpid(pid, nullptr, 0);
+	}
+	return 0;
+}
+
 int executeExpression(Expression& expression) {
 	// Check for empty expression
 	if (expression.commands.size() == 0)
 		return EINVAL;
 
 	// Handle intern commands (like 'cd' and 'exit')
-	
+	if (strcmp(expression.commands.at(0).parts.at(0).c_str(), "exit") == 0) {
+		exit(0);
+	}
+	if (strcmp(expression.commands.at(0).parts.at(0).c_str(), "cd") == 0)
+		chdir(expression.commands.at(0).parts.at(1).c_str());
+
 	// External commands, executed with fork():
 	// Loop over all commandos, and connect the output and input of the forked processes
+	if (expression.commands.size() < 2) {
+		execCmd(expression);
+	} else {
+		int nCommand = expression.commands.size();
+		int pipefds[nCommand-1][2];
+		int pids[nCommand];
 
-	// For now, we just execute the first command in the expression. Disable.
-	executeCommand(expression.commands[0]);
+		for(int i=0; i<nCommand-1; i++){
+			pipe(pipefds[i]);
+		}
 
+		for(int i = 0; i < nCommand; i++) {
+			pids[i] = fork();
+			if(pids[i] == 0) {
+				if(i == 0) {
+					if (expression.background) {
+						close(STDIN_FILENO);
+					}
+					dup2(pipefds[i][WRITE_END], STDOUT_FILENO);
+					close(pipefds[i][READ_END]);
+					close(pipefds[i][WRITE_END]);
+				} 
+				else if (i+1 == nCommand) {
+					dup2(pipefds[i-1][READ_END], STDIN_FILENO);
+					close(pipefds[i-1][WRITE_END]);
+					close(pipefds[i-1][READ_END]);
+				}
+				else {
+					dup2(pipefds[i-1][READ_END], STDIN_FILENO);
+					dup2(pipefds[i][WRITE_END], STDOUT_FILENO);
+					close(pipefds[i-1][READ_END]);
+					close(pipefds[i-1][WRITE_END]);
+					close(pipefds[i][READ_END]);
+					close(pipefds[i][WRITE_END]);
+				}
+				executeCommand(expression.commands.at(i));
+				_exit(0);
+				abort();
+			}
+		}
+		
+		for(int i=0; i<nCommand-1; i++){
+			close(pipefds[i][READ_END]);
+			close(pipefds[i][WRITE_END]);
+		}
+		for (int i = 0; i < nCommand; i++) {
+			waitpid(pids[i], NULL, 0);
+		}
+	}
 	return 0;
 }
 
@@ -207,9 +271,7 @@ int step1(bool showPrompt) {
 }
 
 int shell(bool showPrompt) {
-	/*
 	return normal(showPrompt);
-	*/
-	return step1(showPrompt);
+	//return step1(showPrompt);
 	
 }
