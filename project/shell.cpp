@@ -19,6 +19,8 @@
 #include <sys/param.h>
 #include <signal.h>
 #include <string.h>
+#include <semaphore.h>
+#include <fcntl.h>
 
 #include <vector>
 
@@ -141,6 +143,13 @@ int execCmd(Expression& expression) {
 		if (expression.background) {
 			close(STDIN_FILENO);
 		}
+		if (strcmp(expression.outputToFile.c_str(), "") != 0) {
+			int filefd = open(expression.outputToFile.c_str(), O_CREAT | O_RDWR, 0444);
+			dup2(filefd, STDOUT_FILENO);
+			close(filefd);
+		} else if (strcmp(expression.inputFromFile.c_str(), "") != 0) {
+			freopen(expression.inputFromFile.c_str(), "r", stdin);
+		}
 		executeCommand(expression.commands.at(0));
 	}
 	if (expression.background == false) {
@@ -177,20 +186,36 @@ int executeExpression(Expression& expression) {
 		for(int i = 0; i < nCommand; i++) {
 			pids[i] = fork();
 			if(pids[i] == 0) {
-				if(i == 0) {
+				if(i == 0) { // First command
 					if (expression.background) {
 						close(STDIN_FILENO);
 					}
-					dup2(pipefds[i][WRITE_END], STDOUT_FILENO);
-					close(pipefds[i][READ_END]);
-					close(pipefds[i][WRITE_END]);
+					if (strcmp(expression.inputFromFile.c_str(), "") != 0) {
+						freopen(expression.inputFromFile.c_str(), "r", stdin);
+						dup2(pipefds[i][WRITE_END], STDOUT_FILENO);
+						close(pipefds[i][READ_END]);
+						close(pipefds[i][WRITE_END]);
+					} else {
+						dup2(pipefds[i][WRITE_END], STDOUT_FILENO);
+						close(pipefds[i][READ_END]);
+						close(pipefds[i][WRITE_END]);
+					}
 				} 
-				else if (i+1 == nCommand) {
-					dup2(pipefds[i-1][READ_END], STDIN_FILENO);
-					close(pipefds[i-1][WRITE_END]);
-					close(pipefds[i-1][READ_END]);
-				}
-				else {
+				else if (i+1 == nCommand) { // Last command
+					if (strcmp(expression.outputToFile.c_str(), "") != 0) {
+						int filefd = open(expression.outputToFile.c_str(), O_CREAT | O_RDWR, 0444);
+						dup2(pipefds[i-1][READ_END], STDIN_FILENO);
+						dup2(filefd, STDOUT_FILENO);
+						close(pipefds[i-1][WRITE_END]);
+						close(pipefds[i-1][READ_END]);
+						close(filefd);
+					} else {
+						dup2(pipefds[i-1][READ_END], STDIN_FILENO);
+						close(pipefds[i-1][WRITE_END]);
+						close(pipefds[i-1][READ_END]);
+					}
+				} 
+				else { // Middle command(s)
 					dup2(pipefds[i-1][READ_END], STDIN_FILENO);
 					dup2(pipefds[i][WRITE_END], STDOUT_FILENO);
 					close(pipefds[i-1][READ_END]);
@@ -208,9 +233,12 @@ int executeExpression(Expression& expression) {
 			close(pipefds[i][READ_END]);
 			close(pipefds[i][WRITE_END]);
 		}
-		for (int i = 0; i < nCommand; i++) {
-			waitpid(pids[i], NULL, 0);
+		if (expression.background == false) {
+			for (int i = 0; i < nCommand; i++) {
+				waitpid(pids[i], NULL, 0);
+			}
 		}
+		
 	}
 	return 0;
 }
